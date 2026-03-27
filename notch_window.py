@@ -1,39 +1,61 @@
-from datetime import datetime, timezone
-
 import threading
+from datetime import datetime, timezone
 
 from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QApplication, QWidget
 
 import config
+from panels.claude_panel import ClaudePanel
+from panels.system_panel import SystemPanel
+from app_service import AppSnapshot, collect_apps
+from system_service import SystemMonitor, SystemSnapshot
 from usage_service import UsageData, fetch_usage
-
-
-def _status_color(pct: float) -> str:
-    if pct < 50:
-        return config.COLOR_SAFE
-    elif pct < 80:
-        return config.COLOR_MODERATE
-    else:
-        return config.COLOR_CRITICAL
 
 
 class NotchWindow(QWidget):
     _fetch_done = pyqtSignal(UsageData)
+    _sys_done = pyqtSignal(SystemSnapshot)
+    _app_done = pyqtSignal(AppSnapshot)
 
     def __init__(self):
         super().__init__()
         self._drag_pos: QPointF | None = None
         self._usage: UsageData = UsageData()
         self._loading = False
-        self._hover_btn: str | None = None  # "refresh" | "quit" | None
+        self._hover_btn: str | None = None
 
-        # Button hit-test rects (set during paint)
+        # Button hit-test rects
         self._refresh_btn_rect = QRectF()
         self._quit_btn_rect = QRectF()
 
+        # System monitoring
+        self._system_monitor = SystemMonitor()
+        self._snapshot = SystemSnapshot()
+        self._sys_collecting = False
+
+        # App integrations
+        self._app_snapshot = AppSnapshot()
+        self._app_collecting = False
+
+        # Panels
+        header_h = config.HEADER_HEIGHT
+        footer_h = 28
+        body_top = header_h
+        body_h = config.TOTAL_HEIGHT - header_h - footer_h
+
+        self._claude_panel = ClaudePanel(
+            QRectF(0, body_top, config.LEFT_PANEL_WIDTH, body_h)
+        )
+        self._system_panel = SystemPanel(
+            QRectF(config.LEFT_PANEL_WIDTH, body_top,
+                   config.RIGHT_PANEL_WIDTH, body_h)
+        )
+
+        # Signals
         self._fetch_done.connect(self._on_fetch_done)
+        self._sys_done.connect(self._on_sys_done)
+        self._app_done.connect(self._on_app_done)
 
         self._setup_window()
         self._center_on_screen()
@@ -49,7 +71,7 @@ class NotchWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
-        self.setFixedSize(config.NOTCH_WIDTH, config.NOTCH_HEIGHT)
+        self.setFixedSize(config.TOTAL_WIDTH, config.TOTAL_HEIGHT)
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()
@@ -60,18 +82,32 @@ class NotchWindow(QWidget):
             self.move(x, y)
 
     def _setup_polling(self):
+        # Claude API polling (5 min)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(config.POLL_INTERVAL_MS)
 
+        # System metrics polling (1 sec)
+        self._sys_timer = QTimer(self)
+        self._sys_timer.timeout.connect(self._collect_system)
+        self._sys_timer.start(config.SYSTEM_POLL_INTERVAL_MS)
+
+        # App integrations polling (60 sec)
+        self._app_timer = QTimer(self)
+        self._app_timer.timeout.connect(self._collect_apps)
+        self._app_timer.start(config.APP_POLL_INTERVAL_MS)
+        self._collect_apps()  # initial fetch
+
     def _setup_footer_timer(self):
         self._footer_timer = QTimer(self)
         self._footer_timer.timeout.connect(self.update)
-        self._footer_timer.start(30_000)  # repaint every 30s to keep "Updated Xm ago" fresh
+        self._footer_timer.start(30_000)
+
+    # ── Claude API fetch ──────────────────────────────
 
     def _refresh(self):
         if self._loading:
-            return  # already fetching
+            return
         self._loading = True
         self.update()
         threading.Thread(target=self._do_fetch, daemon=True).start()
@@ -85,7 +121,41 @@ class NotchWindow(QWidget):
         self._loading = False
         self.update()
 
-    # ── Paint ──────────────────────────────────────────
+    # ── System metrics fetch ──────────────────────────
+
+    def _collect_system(self):
+        if self._sys_collecting:
+            return
+        self._sys_collecting = True
+        threading.Thread(target=self._do_collect_system, daemon=True).start()
+
+    def _do_collect_system(self):
+        snapshot = self._system_monitor.collect()
+        self._sys_done.emit(snapshot)
+
+    def _on_sys_done(self, snapshot: SystemSnapshot):
+        self._snapshot = snapshot
+        self._sys_collecting = False
+        self.update()
+
+    # ── App integrations fetch ────────────────────────
+
+    def _collect_apps(self):
+        if self._app_collecting:
+            return
+        self._app_collecting = True
+        threading.Thread(target=self._do_collect_apps, daemon=True).start()
+
+    def _do_collect_apps(self):
+        snapshot = collect_apps()
+        self._app_done.emit(snapshot)
+
+    def _on_app_done(self, snapshot: AppSnapshot):
+        self._app_snapshot = snapshot
+        self._app_collecting = False
+        self.update()
+
+    # ── Paint ─────────────────────────────────────────
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -99,25 +169,27 @@ class NotchWindow(QWidget):
         p.setPen(QPen(QColor("#333333"), 1))
         p.drawPath(card)
 
+        # Header
         self._draw_header(p)
 
-        if self._loading and self._usage.error is None:
-            p.setPen(QPen(QColor(config.TEXT_COLOR)))
-            p.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE))
-            p.drawText(QRectF(0, 0, self.width(), self.height()),
-                       Qt.AlignmentFlag.AlignCenter, "Loading...")
-        elif self._usage.error:
-            self._draw_error(p)
-        else:
-            self._draw_metrics(p)
+        # Vertical separator
+        sep_x = config.LEFT_PANEL_WIDTH
+        p.setPen(QPen(QColor(config.SEPARATOR_COLOR), 1))
+        p.drawLine(int(sep_x), int(config.HEADER_HEIGHT),
+                   int(sep_x), int(self.height() - 28))
 
+        # Left panel: Claude metrics + process tables + notifications
+        self._claude_panel.paint(p, self._usage, self._loading, self._snapshot, self._app_snapshot)
+
+        # Right panel: System metrics
+        self._system_panel.paint(p, self._snapshot, self._system_monitor)
+
+        # Footer
         self._draw_footer(p)
         p.end()
 
     def _draw_header(self, p: QPainter):
         pad = 14
-        y_center = config.HEADER_HEIGHT / 2
-
         # Title
         p.setPen(QPen(QColor(config.TEXT_COLOR)))
         title_font = QFont(config.FONT_FAMILY, config.TITLE_FONT_SIZE, QFont.Weight.Bold)
@@ -125,7 +197,7 @@ class NotchWindow(QWidget):
         p.drawText(QRectF(pad, 0, 200, config.HEADER_HEIGHT),
                    Qt.AlignmentFlag.AlignVCenter, "Claude Max Monitor")
 
-        # Refresh button (↻)
+        # Refresh button
         btn_size = 22
         btn_y = (config.HEADER_HEIGHT - btn_size) / 2
         refresh_x = self.width() - pad - btn_size * 2 - 6
@@ -134,7 +206,6 @@ class NotchWindow(QWidget):
         btn_font = QFont(config.FONT_FAMILY, 12)
         p.setFont(btn_font)
 
-        # Highlight on hover
         if self._hover_btn == "refresh":
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(QColor("#333333")))
@@ -144,7 +215,7 @@ class NotchWindow(QWidget):
             p.setPen(QPen(QColor(config.BUTTON_COLOR)))
         p.drawText(self._refresh_btn_rect, Qt.AlignmentFlag.AlignCenter, "\u21bb")
 
-        # Quit button (✕)
+        # Quit button
         quit_x = self.width() - pad - btn_size
         self._quit_btn_rect = QRectF(quit_x, btn_y, btn_size, btn_size)
 
@@ -157,120 +228,10 @@ class NotchWindow(QWidget):
             p.setPen(QPen(QColor(config.BUTTON_COLOR)))
         p.drawText(self._quit_btn_rect, Qt.AlignmentFlag.AlignCenter, "\u2715")
 
-        # Separator line under header
+        # Separator under header
         p.setPen(QPen(QColor(config.SEPARATOR_COLOR), 1))
         p.drawLine(int(pad), int(config.HEADER_HEIGHT),
                    int(self.width() - pad), int(config.HEADER_HEIGHT))
-
-    def _draw_error(self, p: QPainter):
-        p.setPen(QPen(QColor(config.COLOR_CRITICAL)))
-        p.setFont(QFont(config.FONT_FAMILY, config.LABEL_FONT_SIZE))
-        error_text = self._usage.error or "Unknown error"
-        if len(error_text) > 80:
-            error_text = error_text[:77] + "..."
-        r = QRectF(14, config.HEADER_HEIGHT + 10, self.width() - 28, 100)
-        p.drawText(r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-                   | Qt.TextFlag.TextWordWrap, error_text)
-
-    def _draw_metrics(self, p: QPainter):
-        u = self._usage
-        pad = 14
-        y = config.HEADER_HEIGHT + 12
-        section_h = 62
-
-        # Metric 1: Current Session
-        color1 = _status_color(u.session_utilization)
-        y = self._draw_metric(
-            p, y, pad,
-            label="Current Session",
-            value=f"{u.session_utilization:.0f}%",
-            subtitle=f"Resets in {u.session_reset_str}",
-            pct=u.session_utilization / 100.0,
-            color=color1,
-        )
-
-        # Metric 2: Weekly Limit
-        color2 = _status_color(u.weekly_utilization)
-        y = self._draw_metric(
-            p, y + 10, pad,
-            label="Weekly Limit (All Models)",
-            value=f"{u.weekly_utilization:.0f}%",
-            subtitle=f"Resets in {u.weekly_reset_str}",
-            pct=u.weekly_utilization / 100.0,
-            color=color2,
-        )
-
-        # Metric 3: Daily Average
-        avg = u.avg_per_day
-        avg_val = f"{avg:.1f}%" if avg is not None else "\u2014"
-        avg_pct = min(avg / 20.0, 1.0) if avg is not None else 0.0  # scale: 20%/day = full bar
-        avg_color = _status_color(avg * (7.0 / max(u.days_elapsed or 1, 1))) if avg is not None else config.COLOR_SAFE
-        self._draw_metric(
-            p, y + 10, pad,
-            label="Daily Average",
-            value=avg_val,
-            subtitle=f"~{avg:.1f}%/day over {u.days_elapsed:.1f}d" if avg is not None else "No data yet",
-            pct=avg_pct,
-            color=config.COLOR_SAFE if avg is not None and avg < 15 else config.COLOR_MODERATE if avg is not None else config.COLOR_SAFE,
-        )
-
-    def _draw_metric(self, p: QPainter, y: float, pad: float,
-                     label: str, value: str, subtitle: str,
-                     pct: float, color: str) -> float:
-        w = self.width() - pad * 2
-
-        # Label (left) + value (right)
-        p.setPen(QPen(QColor(config.TEXT_COLOR)))
-        label_font = QFont(config.FONT_FAMILY, config.FONT_SIZE)
-        p.setFont(label_font)
-        p.drawText(QRectF(pad, y, w * 0.7, 18),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
-
-        value_font = QFont(config.FONT_FAMILY, config.FONT_SIZE, QFont.Weight.Bold)
-        p.setFont(value_font)
-        p.setPen(QPen(QColor(color)))
-        p.drawText(QRectF(pad, y, w, 18),
-                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, value)
-
-        # Subtitle
-        p.setPen(QPen(QColor("#666666")))
-        sub_font = QFont(config.FONT_FAMILY, config.FOOTER_FONT_SIZE)
-        p.setFont(sub_font)
-        p.drawText(QRectF(pad, y + 18, w, 14),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, subtitle)
-
-        # Progress bar
-        bar_y = y + 34
-        self._draw_progress_bar(p, pad, bar_y, w, pct, color)
-
-        return bar_y + config.BAR_HEIGHT + 4
-
-    def _draw_progress_bar(self, p: QPainter, x: float, y: float,
-                           width: float, pct: float, color: str):
-        h = config.BAR_HEIGHT
-        r = config.BAR_RADIUS
-
-        # Track
-        track = QPainterPath()
-        track.addRoundedRect(QRectF(x, y, width, h), r, r)
-        p.fillPath(track, QBrush(QColor(config.BAR_TRACK_COLOR)))
-
-        # Fill
-        fill_w = max(h, width * min(pct, 1.0))  # at least pill-width so it looks good
-        if pct > 0.001:
-            fill = QPainterPath()
-            fill.addRoundedRect(QRectF(x, y, fill_w, h), r, r)
-            p.fillPath(fill, QBrush(QColor(color)))
-
-            # Glow dot at fill edge
-            dot_r = h / 2 + 1
-            dot_x = x + fill_w - dot_r
-            dot_y = y + h / 2
-            p.setPen(Qt.PenStyle.NoPen)
-            glow = QColor(color)
-            glow.setAlpha(120)
-            p.setBrush(QBrush(glow))
-            p.drawEllipse(QPointF(dot_x, dot_y), dot_r, dot_r)
 
     def _draw_footer(self, p: QPainter):
         pad = 14
@@ -296,11 +257,15 @@ class NotchWindow(QWidget):
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                        f"Updated {ago}")
 
-        # Poll interval
-        poll_min = config.POLL_INTERVAL_MS // 60000
-        p.drawText(QRectF(self.width() - pad - 60, footer_y, 60, 20),
+        # System info on right side of footer
+        mem = self._snapshot.memory
+        if mem:
+            footer_info = f"CPU: {self._snapshot.cpu_percent:.0f}%  RAM: {mem.usage_percent:.0f}%"
+        else:
+            footer_info = f"CPU: {self._snapshot.cpu_percent:.0f}%"
+        p.drawText(QRectF(self.width() - pad - 200, footer_y, 200, 20),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   f"{poll_min}m poll")
+                   footer_info)
 
     # ── Mouse events ──────────────────────────────────
 
@@ -323,7 +288,6 @@ class NotchWindow(QWidget):
             event.accept()
             return
 
-        # Hover tracking for buttons
         pos = event.position()
         old = self._hover_btn
         if self._refresh_btn_rect.contains(pos):

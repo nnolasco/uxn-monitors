@@ -1,2 +1,7 @@
 PyQt6>=6.6.0
 requests>=2.31.0
+psutil>=5.9.0
+nvidia-ml-py>=12.0.0
+pywin32>=306
+slack_sdk>=3.27.0
+python-dotenv>=1.0.0

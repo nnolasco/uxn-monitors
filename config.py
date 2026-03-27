@@ -13,6 +13,10 @@ USER_AGENT = "claude-code/2.1.5"
 POLL_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
 
 # Window
+TOTAL_WIDTH = 800
+TOTAL_HEIGHT = 780
+LEFT_PANEL_WIDTH = 400
+RIGHT_PANEL_WIDTH = 400
 NOTCH_WIDTH = 300
 NOTCH_HEIGHT = 260
 NOTCH_RADIUS = 16
@@ -43,3 +47,20 @@ FONT_SIZE = 11
 LABEL_FONT_SIZE = 9
 TITLE_FONT_SIZE = 11
 FOOTER_FONT_SIZE = 8
+
+# System monitoring
+SYSTEM_POLL_INTERVAL_MS = 1000   # 1 second for graphs
+APP_POLL_INTERVAL_MS = 60_000    # 60 seconds for app integrations
+PROCESS_POLL_INTERVAL_MS = 2000  # 2 seconds for process lists
+SPARKLINE_HISTORY_SIZE = 120     # 2 minutes of samples
+
+# Graph colors
+COLOR_CPU = "#60a5fa"        # blue
+COLOR_GPU = "#a78bfa"        # purple
+COLOR_NET_DOWN = "#60a5fa"   # blue
+COLOR_NET_UP = "#34d399"     # teal
+COLOR_DISK_IO = "#fbbf24"    # amber
+
+# Gauges
+GAUGE_SECTION_HEIGHT = 140
+GAUGE_TRACK_COLOR = "#2a2a2a"
