@@ -17,7 +17,8 @@ class OutlookData:
 
 
 @dataclass
-class SlackData:
+class SlackWorkspaceData:
+    name: str
     unread_dm_count: int = 0
     error: str | None = None
 
@@ -25,7 +26,7 @@ class SlackData:
 @dataclass
 class AppSnapshot:
     outlook: OutlookData = field(default_factory=OutlookData)
-    slack: SlackData = field(default_factory=SlackData)
+    slack_workspaces: list[SlackWorkspaceData] = field(default_factory=list)
 
 
 def collect_outlook() -> OutlookData:
@@ -80,26 +81,80 @@ def collect_outlook() -> OutlookData:
         return OutlookData(error=str(e))
 
 
-def collect_slack() -> SlackData:
-    """Collect Slack unread DM count via SDK."""
-    token = os.environ.get("SLACK_BOT_TOKEN")
-    if not token:
-        return SlackData(error="SLACK_BOT_TOKEN not set")
+def _get_slack_tokens() -> list[tuple[str, str]]:
+    """Find all Slack tokens from environment.
 
+    Supports:
+      SLACK_TOKEN_MYWORKSPACE=xoxp-...   → name="MyWorkspace"
+      SLACK_BOT_TOKEN=xoxp-...           → name from auth_test (legacy/fallback)
+    """
+    tokens = []
+
+    # Named tokens: SLACK_TOKEN_<NAME>
+    for key, val in os.environ.items():
+        if key.startswith("SLACK_TOKEN_") and val:
+            name = key[len("SLACK_TOKEN_"):].replace("_", " ").title()
+            tokens.append((name, val))
+
+    # Legacy fallback
+    if not tokens:
+        legacy = os.environ.get("SLACK_BOT_TOKEN")
+        if legacy:
+            tokens.append(("", legacy))  # empty name = resolve from API
+
+    return tokens
+
+
+def _collect_one_slack(name: str, token: str) -> SlackWorkspaceData:
+    """Collect unread DM count for one Slack workspace."""
     try:
         from slack_sdk import WebClient
         client = WebClient(token=token)
-        response = client.conversations_list(types="im", exclude_archived=True)
-        channels = response.get("channels", [])
-        unread = sum(ch.get("unread_count_display", 0) for ch in channels)
-        return SlackData(unread_dm_count=unread)
+
+        # Resolve workspace name if not provided
+        display_name = name
+        if not display_name:
+            try:
+                auth = client.auth_test()
+                display_name = auth.get("team", "Slack")
+            except Exception:
+                display_name = "Slack"
+
+        # Collect DM channels (1:1 and group DMs)
+        all_channels = []
+        for dm_type in ["im", "mpim"]:
+            try:
+                response = client.conversations_list(types=dm_type, exclude_archived=True)
+                all_channels.extend(response.get("channels", []))
+            except Exception:
+                pass
+
+        # conversations.info per channel gives accurate unread counts
+        unread = 0
+        for ch in all_channels:
+            try:
+                info = client.conversations_info(channel=ch["id"])["channel"]
+                unread += info.get("unread_count_display", 0)
+            except Exception:
+                continue
+
+        return SlackWorkspaceData(name=display_name, unread_dm_count=unread)
     except Exception as e:
-        return SlackData(error=str(e))
+        return SlackWorkspaceData(name=name or "Slack", error=str(e))
+
+
+def collect_slack() -> list[SlackWorkspaceData]:
+    """Collect Slack data for all configured workspaces."""
+    tokens = _get_slack_tokens()
+    if not tokens:
+        return [SlackWorkspaceData(name="Slack", error="No Slack tokens configured")]
+
+    return [_collect_one_slack(name, token) for name, token in tokens]
 
 
 def collect_apps() -> AppSnapshot:
     """Collect all app data. Called from background thread."""
     return AppSnapshot(
         outlook=collect_outlook(),
-        slack=collect_slack(),
+        slack_workspaces=collect_slack(),
     )

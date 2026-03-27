@@ -190,11 +190,12 @@ def draw_arc_gauge(
     value_text: str,
     label: str,
     usage_percent: float,
+    subtitle: str = "",
 ):
-    """Draw a semicircular arc gauge (270°) with value and label."""
+    """Draw a semicircular arc gauge (270°) with value, label, and subtitle."""
     arc_degrees = 270
     arc_width = 8
-    label_space = 30  # space for label below arc
+    label_space = 40  # space for label + subtitle below arc
 
     # Compute arc square (centered horizontally in rect)
     arc_side = min(rect.width() - 8, rect.height() - label_space)
@@ -233,6 +234,15 @@ def draw_arc_gauge(
     # Label below
     p.setPen(QPen(QColor("#888888")))
     p.setFont(QFont(config.FONT_FAMILY, 8))
-    lbl_rect = QRectF(rect.left(), arc_y + arc_side - 2, rect.width(), 20)
+    lbl_y = arc_y + arc_side + 4
+    lbl_rect = QRectF(rect.left(), lbl_y, rect.width(), 16)
     p.drawText(lbl_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                label)
+
+    # Subtitle (total) below label
+    if subtitle:
+        p.setPen(QPen(QColor("#888888")))
+        p.setFont(QFont(config.FONT_FAMILY, 8))
+        sub_rect = QRectF(rect.left(), lbl_y + 14, rect.width(), 14)
+        p.drawText(sub_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   subtitle)

@@ -279,24 +279,25 @@ class ClaudePanel:
 
         y += 4
 
-        # Slack unread DMs
-        slack = app.slack
-        if slack.error and "not set" in (slack.error or ""):
-            p.setPen(QPen(QColor("#555555")))
-            p.setFont(QFont(config.FONT_FAMILY, 8))
-            p.drawText(QRectF(x, y, w, row_h),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       "\U0001F4AC Slack: not configured")
-        elif slack.error:
-            p.setPen(QPen(QColor("#555555")))
-            p.setFont(QFont(config.FONT_FAMILY, 8))
-            p.drawText(QRectF(x, y, w, row_h),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       "\U0001F4AC Slack: not connected")
-        else:
-            count_color = config.COLOR_MODERATE if slack.unread_dm_count > 0 else "#888888"
-            p.setPen(QPen(QColor(count_color)))
-            p.setFont(QFont(config.FONT_FAMILY, 9))
-            p.drawText(QRectF(x, y, w, row_h),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       f"\U0001F4AC {slack.unread_dm_count} unread DMs")
+        # Slack unread DMs (per workspace)
+        for ws in app.slack_workspaces:
+            if ws.error and "not configured" in (ws.error or ""):
+                p.setPen(QPen(QColor("#555555")))
+                p.setFont(QFont(config.FONT_FAMILY, 8))
+                p.drawText(QRectF(x, y, w, row_h),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           "\U0001F4AC Slack: not configured")
+            elif ws.error:
+                p.setPen(QPen(QColor("#555555")))
+                p.setFont(QFont(config.FONT_FAMILY, 8))
+                p.drawText(QRectF(x, y, w, row_h),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           f"\U0001F4AC {ws.name}: not connected")
+            else:
+                count_color = config.COLOR_MODERATE if ws.unread_dm_count > 0 else "#888888"
+                p.setPen(QPen(QColor(count_color)))
+                p.setFont(QFont(config.FONT_FAMILY, 9))
+                p.drawText(QRectF(x, y, w, row_h),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           f"\U0001F4AC {ws.name}: {ws.unread_dm_count} unread DMs")
+            y += row_h

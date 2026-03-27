@@ -164,13 +164,15 @@ class SystemPanel:
         for drive in snapshot.drives:
             items.append({
                 "label": f"{drive.label} Drive",
-                "value_text": f"{drive.free_gb:.0f} GB",
+                "value_text": f"{drive.free_gb:.1f} GB",
+                "subtitle": f"Total: {drive.total_gb:.1f} GB",
                 "usage_percent": drive.usage_percent,
             })
         if snapshot.memory:
             items.append({
                 "label": "RAM",
                 "value_text": f"{snapshot.memory.available_gb:.1f} GB",
+                "subtitle": f"Total: {snapshot.memory.total_gb:.1f} GB",
                 "usage_percent": snapshot.memory.usage_percent,
             })
 
@@ -182,4 +184,5 @@ class SystemPanel:
             gauge_rect = QRectF(rect.left() + i * gauge_w, rect.top(),
                                 gauge_w, rect.height())
             draw_arc_gauge(p, gauge_rect, item["value_text"],
-                           item["label"], item["usage_percent"])
+                           item["label"], item["usage_percent"],
+                           subtitle=item.get("subtitle", ""))
