@@ -5,6 +5,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 
 import config
 from app_service import AppSnapshot
+from token_service import TokenStats
 from usage_service import UsageData
 from system_service import AppGroup, SystemSnapshot, format_memory
 from panels.painters import draw_process_row, draw_section_header
@@ -27,7 +28,8 @@ class ClaudePanel:
 
     def paint(self, p: QPainter, usage: UsageData, loading: bool,
               snapshot: SystemSnapshot | None = None,
-              app_snapshot: AppSnapshot | None = None):
+              app_snapshot: AppSnapshot | None = None,
+              token_stats: TokenStats | None = None):
         if loading and usage.error is None and usage.session_utilization == 0.0:
             p.setPen(QPen(QColor(config.TEXT_COLOR)))
             p.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE))
@@ -36,6 +38,8 @@ class ClaudePanel:
             self._draw_error(p, usage)
         else:
             y = self._draw_metrics(p, usage)
+            if token_stats is not None and token_stats.lifetime_total > 0:
+                y = self._draw_token_stats(p, y + 10, token_stats)
             if snapshot is not None:
                 y = self._draw_terminals(p, y + 14, snapshot)
                 y = self._draw_top_processes(p, y + 10, snapshot)
@@ -146,6 +150,47 @@ class ClaudePanel:
             glow.setAlpha(120)
             p.setBrush(QBrush(glow))
             p.drawEllipse(QPointF(dot_x, dot_y), dot_r, dot_r)
+
+    # ── Token Stats ────────────────────────────────────
+
+    def _draw_token_stats(self, p: QPainter, y: float, ts: TokenStats) -> float:
+        pad = 14
+        x = self.rect.left() + pad
+        w = self.rect.width() - pad * 2
+        row_h = 17
+
+        y = draw_section_header(p, x, y, w, "Token Usage")
+
+        # Row helper
+        def _row(label: str, value: str, color: str = "#888888"):
+            nonlocal y
+            p.setFont(QFont(config.FONT_FAMILY, 9))
+            p.setPen(QPen(QColor(config.TEXT_COLOR)))
+            p.drawText(QRectF(x, y, w * 0.6, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+            p.setPen(QPen(QColor(color)))
+            p.setFont(QFont(config.FONT_FAMILY, 9, QFont.Weight.Bold))
+            p.drawText(QRectF(x, y, w, row_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, value)
+            y += row_h
+
+        _row("Output tokens", ts.lifetime_output_str, config.COLOR_CPU)
+        _row("Input tokens", ts.lifetime_input_str, config.COLOR_GPU)
+        _row("Cache reads", ts.cache_read_str, config.COLOR_NET_UP)
+
+        if ts.estimated_tokens_today > 0:
+            _row("Today (est.)", ts.tokens_today_str, config.COLOR_MODERATE)
+
+        # Staleness note
+        if ts.cache_last_computed:
+            p.setPen(QPen(QColor("#555555")))
+            p.setFont(QFont(config.FONT_FAMILY, 7))
+            p.drawText(QRectF(x, y, w, 14),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"Stats cached: {ts.cache_last_computed}")
+            y += 14
+
+        return y
 
     # ── Terminal Processes ──────────────────────────────
 

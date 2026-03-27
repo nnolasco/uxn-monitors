@@ -10,6 +10,7 @@ from panels.claude_panel import ClaudePanel
 from panels.system_panel import SystemPanel
 from app_service import AppSnapshot, collect_apps
 from system_service import SystemMonitor, SystemSnapshot
+from token_service import TokenStats, load_token_stats
 from usage_service import UsageData, fetch_usage
 
 RESIZE_ZONE = 8    # pixels from right edge for resize handle
@@ -48,6 +49,9 @@ class NotchWindow(QWidget):
         # App integrations
         self._app_snapshot = AppSnapshot()
         self._app_collecting = False
+
+        # Token stats
+        self._token_stats = TokenStats()
 
         # Persistence
         self._settings = QSettings("UXNMonitors", "ClaudeMaxMonitor")
@@ -193,6 +197,7 @@ class NotchWindow(QWidget):
 
     def _on_app_done(self, snapshot: AppSnapshot):
         self._app_snapshot = snapshot
+        self._token_stats = load_token_stats()
         self._app_collecting = False
         self.update()
 
@@ -229,7 +234,7 @@ class NotchWindow(QWidget):
                 p.drawEllipse(QPointF(sep_x, mid_y + dy), 2, 2)
 
         # Panels
-        self._claude_panel.paint(p, self._usage, self._loading, self._snapshot, self._app_snapshot)
+        self._claude_panel.paint(p, self._usage, self._loading, self._snapshot, self._app_snapshot, self._token_stats)
         self._system_panel.paint(p, self._snapshot, self._system_monitor)
 
         self._draw_footer(p)

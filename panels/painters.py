@@ -195,7 +195,7 @@ def draw_arc_gauge(
     """Draw a semicircular arc gauge (270°) with value, label, and subtitle."""
     arc_degrees = 270
     arc_width = 8
-    label_space = 40  # space for label + subtitle below arc
+    label_space = 50  # space for label + subtitle below arc
 
     # Compute arc square (centered horizontally in rect)
     arc_side = min(rect.width() - 8, rect.height() - label_space)

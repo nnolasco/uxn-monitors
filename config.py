@@ -1,7 +1,9 @@
 from pathlib import Path
 
-# Credentials
+# Credentials & local data
 CLAUDE_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+STATS_CACHE_PATH = Path.home() / ".claude" / "stats-cache.json"
+HISTORY_PATH = Path.home() / ".claude" / "history.jsonl"
 
 # API
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -15,7 +17,7 @@ POLL_INTERVAL_MS = 5 * 60 * 1000  # 5 minutes
 # Window
 DEFAULT_WIDTH = 850
 MIN_WIDTH = 600
-TOTAL_HEIGHT = 780
+TOTAL_HEIGHT = 880
 DEFAULT_LEFT_WIDTH = 400
 MIN_LEFT_WIDTH = 250
 MIN_RIGHT_WIDTH = 250
@@ -62,5 +64,5 @@ COLOR_NET_UP = "#34d399"     # teal
 COLOR_DISK_IO = "#fbbf24"    # amber
 
 # Gauges
-GAUGE_SECTION_HEIGHT = 160
+GAUGE_SECTION_HEIGHT = 175
 GAUGE_TRACK_COLOR = "#2a2a2a"
